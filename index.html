@@ -82,7 +82,7 @@
   </div>
 
   <div class="result" id="result">
-    <div class="rbar"><h2 id="rtitle">Result</h2><button onclick="scanAgain()">↺ Scan again</button></div>
+    <div class="rbar"><h2 id="rtitle">Device Details</h2><button onclick="scanAgain()">✕ Close</button></div>
     <div class="rbody" id="rbody"></div>
   </div>
 
@@ -229,15 +229,29 @@ function showResult(r,query){
   rbody.innerHTML=r.matches.map(function(a){
     var stCls=a.status==='On Hold'?'st-OnHold':'st-'+String(a.status||'').replace(/\s/g,'');
     var hold=a.status==='On Hold'?'<div class="hold">🚫 ON HOLD: '+esc(a.holdComment||'no reason given')+'</div>':'';
-    return '<div class="card"><div>'+(a.sn?'<span class="chip">'+esc(a.sn)+'</span>':'')+(a.tag?'<span class="chip">'+esc(a.tag)+'</span>':'')+'</div>'
+    var icon={Laptop:'💻',Desktop:'🖥️',iPad:'📱',iPhone:'📱',Monitor:'🖵','Network Device':'🌐',Printer:'🖨️',Accessory:'🔌'}[a.category]||'📦';
+    return '<div class="card">'
+      +'<div style="font-size:15px;color:#0F3D5C;font-weight:800;margin-bottom:4px">'+icon+' '+esc(a.category||'Asset')+'</div>'
+      +'<div>'+(a.tag?'<span class="chip">'+esc(a.tag)+'</span>':'')+(a.sn?'<span class="chip">'+esc(a.sn)+'</span>':'')+'</div>'
       +'<span class="st '+stCls+'">'+esc(a.status==='On Hold'?'🚫 On Hold':(a.status||'—'))+'</span>'+hold
       +'<div class="kv" style="margin-top:14px">'
-      +kv('Category',a.category)+kv('Brand / Model',((a.brand||'')+' '+(a.model||'')).trim())
-      +kv('Current Custodian',a.custodian||'Unassigned')+kv('EMP ID',a.empId)
-      +kv('Department',a.dept)+kv('Date of Issue',a.issuedDate)
-      +kv('Procured Date',a.procuredDate)+kv('Comments',a.comments)
-      +'</div></div>';
-  }).join('');
+      +kv('Tag Number',a.tag)
+      +kv('Serial Number',a.sn)
+      +kv('Brand / Model',((a.brand||'')+' '+(a.model||'')).trim())
+      +kv('Current Custodian',a.custodian||'Unassigned')
+      +kv('EMP ID',a.empId)
+      +kv('College / Department',a.dept)
+      +kv('Date of Issue',a.issuedDate)
+      +kv('Next Issue Date',a.nextIssuedDate)
+      +kv('Previous Custodian',a.prevCustodian)
+      +kv('Returned Date',a.returnedDate)
+      +kv('Procured Date',a.procuredDate)
+      +kv('Warranty End',a.warrantyEnd)
+      +kv('Comments',a.comments)
+      +'</div>'
+      +'</div>';
+  }).join('')
+  + '<button class="bigbtn" style="margin-top:4px" onclick="scanAgain()">✕ Close &amp; Scan Another</button>';
 }
 function kv(k,v){ if(!v||String(v).trim()==='')return''; return '<div><div class="k">'+esc(k)+'</div><div class="v">'+esc(v)+'</div></div>'; }
 
