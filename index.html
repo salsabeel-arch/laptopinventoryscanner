@@ -62,6 +62,7 @@
     <div id="camBox">
       <video id="v" playsinline autoplay muted webkit-playsinline></video>
       <canvas id="c"></canvas>
+      <canvas id="rc" style="display:none"></canvas>
       <div class="frame" id="frame"></div>
       <div class="hint" id="hint">Tap "Start Camera" below</div>
     </div>
@@ -150,11 +151,34 @@ function startLoop(){
 }
 
 /* explicit Scan Now button */
+var _forceAllAngles=false;
 function doScan(){
   if(!videoReady||!V.videoWidth){ showErr('Camera still starting — wait a second, then tap Scan Now.'); return; }
   $('hint').textContent='Scanning…';
+  _forceAllAngles=true;
   var found=scanFrame();
+  _forceAllAngles=false;
   if(!found){ setTimeout(function(){ if(scanning) $('hint').textContent='No code read — move closer, hold steady, tap Scan Now again'; },350); }
+}
+
+var rctx=null, _rframe=0;
+function decodeCanvas(cv, cx){
+  var im=cx.getImageData(0,0,cv.width,cv.height);
+  return jsQR(im.data,cv.width,cv.height,{inversionAttempts:'attemptBoth'});
+}
+/* Draw the current video frame onto the rotation canvas at the given angle (0/90/180/270). */
+function drawRotated(deg, sw, sh){
+  var R=$('rc');            // hidden rotation canvas
+  if(!rctx){ rctx=R.getContext('2d',{willReadFrequently:true}); }
+  if(deg===90||deg===270){ R.width=sh; R.height=sw; } else { R.width=sw; R.height=sh; }
+  rctx.save();
+  rctx.clearRect(0,0,R.width,R.height);
+  if(deg===0){ rctx.drawImage(V,0,0,sw,sh); }
+  else if(deg===90){ rctx.translate(R.width,0); rctx.rotate(Math.PI/2); rctx.drawImage(V,0,0,sw,sh); }
+  else if(deg===180){ rctx.translate(R.width,R.height); rctx.rotate(Math.PI); rctx.drawImage(V,0,0,sw,sh); }
+  else if(deg===270){ rctx.translate(0,R.height); rctx.rotate(-Math.PI/2); rctx.drawImage(V,0,0,sw,sh); }
+  rctx.restore();
+  return { cv:R, cx:rctx };
 }
 
 function scanFrame(){
@@ -162,17 +186,30 @@ function scanFrame(){
   var vw=V.videoWidth, vh=V.videoHeight;
   if(!ctx){ ctx=C.getContext('2d',{willReadFrequently:true}); }
 
+  // Pass 1 — upright full frame (fastest, covers the common case every cycle)
   C.width=vw; C.height=vh;
   ctx.drawImage(V,0,0,vw,vh);
-  var d=ctx.getImageData(0,0,vw,vh);
-  var code=jsQR(d.data,vw,vh,{inversionAttempts:'attemptBoth'});
+  var code=jsQR(ctx.getImageData(0,0,vw,vh).data,vw,vh,{inversionAttempts:'attemptBoth'});
 
+  // Pass 2 — upright centre-crop upscaled (helps small / far codes)
   if(!code){
     var cw=Math.floor(vw*0.55), ch=Math.floor(vh*0.55);
     var sx=Math.floor((vw-cw)/2), sy=Math.floor((vh-ch)/2);
     ctx.drawImage(V,sx,sy,cw,ch,0,0,vw,vh);
-    var d2=ctx.getImageData(0,0,vw,vh);
-    code=jsQR(d2.data,vw,vh,{inversionAttempts:'attemptBoth'});
+    code=jsQR(ctx.getImageData(0,0,vw,vh).data,vw,vh,{inversionAttempts:'attemptBoth'});
+  }
+
+  // Pass 3 — ROTATIONS. jsQR reads most angles, but hard/steep rotations fail;
+  // trying 90° / 180° / 270° makes the scan work no matter how the phone is held.
+  // Rotations are heavier, so cycle through one extra angle per frame (round-robin)
+  // for continuous scanning, and try ALL angles when the user taps "Scan Now".
+  if(!code){
+    var angles = _forceAllAngles ? [90,180,270] : [[90,180,270][_rframe % 3]];
+    _rframe++;
+    for(var i=0;i<angles.length && !code;i++){
+      var rr=drawRotated(angles[i], vw, vh);
+      code=decodeCanvas(rr.cv, rr.cx);
+    }
   }
 
   if(code&&code.data){
