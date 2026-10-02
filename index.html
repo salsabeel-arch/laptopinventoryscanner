@@ -65,7 +65,10 @@
           onkeydown="if(event.key==='Enter')lookup(this.value)">
         <button onclick="lookup(document.getElementById('manual').value)">🔍 Find</button>
       </div>
-      <button class="startBtn" id="startBtn" onclick="startCam()">📷 Start Camera</button>
+      <div style="display:flex;gap:10px;align-items:center">
+        <button class="startBtn" id="startBtn" onclick="startCam()">📷 Start Camera</button>
+        <button id="torchBtn" onclick="toggleTorch()" style="display:none;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.4);padding:15px 18px;border-radius:12px;font-size:18px">🔦</button>
+      </div>
     </div>
   </div>
 
@@ -83,7 +86,7 @@ var EXEC_URL = 'https://script.google.com/macros/s/AKfycbwQO0nRwuqgQybbz1ReVEONu
 
 var stream=null, raf=null, scanning=false, jsonpSeq=0;
 
-function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c];});}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 
 function startCam(){
   var hint=document.getElementById('hint'), btn=document.getElementById('startBtn');
@@ -92,14 +95,32 @@ function startCam(){
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
     showErr('Camera not supported on this browser. Use manual entry.'); hint.textContent=''; return;
   }
-  navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}})
+  navigator.mediaDevices.getUserMedia({video:{
+      facingMode:{ideal:'environment'},
+      width:{ideal:1920}, height:{ideal:1080},
+      focusMode:'continuous'
+    }})
     .then(function(s){
       stream=s;
       var v=document.getElementById('v');
       v.srcObject=s; v.setAttribute('playsinline',''); v.muted=true;
       v.play().catch(function(){});
+      // attempt continuous autofocus on the track (helps close-range labels)
+      try {
+        var track=s.getVideoTracks()[0];
+        var caps=track.getCapabilities?track.getCapabilities():{};
+        if(caps.focusMode && caps.focusMode.indexOf('continuous')>=0){
+          track.applyConstraints({advanced:[{focusMode:'continuous'}]}).catch(function(){});
+        }
+      } catch(e){}
       btn.style.display='none';
-      hint.textContent='Point camera at a GMU QR label';
+      // show torch button if the device supports it
+      try {
+        var tk=s.getVideoTracks()[0];
+        var cp=tk.getCapabilities?tk.getCapabilities():{};
+        if(cp.torch){ document.getElementById('torchBtn').style.display=''; }
+      } catch(e){}
+      hint.textContent='Point camera at a GMU QR label — hold steady';
       scanning=true; raf=requestAnimationFrame(tick);
     })
     .catch(function(e){
@@ -112,22 +133,55 @@ function startCam(){
 }
 function showErr(msg){ document.getElementById('errSlot').innerHTML='<div class="errline">'+esc(msg)+'</div>'; }
 
+var _ctx=null, _frameCount=0;
 function tick(){
   if(!scanning)return;
   var v=document.getElementById('v');
-  if(!v||v.readyState<2){raf=requestAnimationFrame(tick);return;}
+  if(!v||v.readyState<2||!v.videoWidth){raf=requestAnimationFrame(tick);return;}
   var c=document.getElementById('c');
-  c.width=v.videoWidth; c.height=v.videoHeight;
-  var ctx=c.getContext('2d'); ctx.drawImage(v,0,0,c.width,c.height);
-  var img=ctx.getImageData(0,0,c.width,c.height);
-  var code=jsQR(img.data,img.width,img.height,{inversionAttempts:'dontInvert'});
-  if(code&&code.data){ document.getElementById('frame').classList.add('hit'); stopCam(); lookup(code.data); return; }
+  var vw=v.videoWidth, vh=v.videoHeight;
+  if(!_ctx){ _ctx=c.getContext('2d',{willReadFrequently:true}); }
+
+  // Pass 1 — full frame (every frame)
+  c.width=vw; c.height=vh;
+  _ctx.drawImage(v,0,0,vw,vh);
+  var img=_ctx.getImageData(0,0,vw,vh);
+  var code=jsQR(img.data,vw,vh,{inversionAttempts:'attemptBoth'});
+
+  // Pass 2 — zoomed centre crop (helps small / far QR), run on alternating frames
+  if(!code && (_frameCount & 1)){
+    var cropW=Math.floor(vw*0.6), cropH=Math.floor(vh*0.6);
+    var sx=Math.floor((vw-cropW)/2), sy=Math.floor((vh-cropH)/2);
+    // upscale the crop to full canvas for more pixels per module
+    _ctx.drawImage(v, sx, sy, cropW, cropH, 0, 0, vw, vh);
+    var img2=_ctx.getImageData(0,0,vw,vh);
+    code=jsQR(img2.data,vw,vh,{inversionAttempts:'attemptBoth'});
+  }
+  _frameCount++;
+
+  if(code&&code.data){
+    document.getElementById('frame').classList.add('hit');
+    // brief pause so the green frame is visible, then look up
+    stopCam();
+    setTimeout(function(){ lookup(code.data); }, 150);
+    return;
+  }
   raf=requestAnimationFrame(tick);
 }
+var torchOn=false;
+function toggleTorch(){
+  if(!stream)return;
+  var tk=stream.getVideoTracks()[0];
+  torchOn=!torchOn;
+  tk.applyConstraints({advanced:[{torch:torchOn}]})
+    .then(function(){ document.getElementById('torchBtn').style.background=torchOn?'#F2A33C':'rgba(255,255,255,.15)'; })
+    .catch(function(){ torchOn=false; });
+}
 function stopCam(){
-  scanning=false;
+  scanning=false; torchOn=false;
   if(stream){stream.getTracks().forEach(function(t){t.stop();});stream=null;}
   if(raf){cancelAnimationFrame(raf);raf=null;}
+  var tb=document.getElementById('torchBtn'); if(tb){tb.style.display='none';tb.style.background='rgba(255,255,255,.15)';}
 }
 
 /* JSONP call — bypasses CORS entirely, works from GitHub Pages to Apps Script */
